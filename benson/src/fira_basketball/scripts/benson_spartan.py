@@ -1,0 +1,253 @@
+import rospy
+from op3_ros_utils import getWalkingParams, Robot
+import cv2
+import numpy as np
+import time
+import math
+from scipy import optimize
+from sensor_msgs.msg import Imu
+
+z_gyro = 0.0
+z_gyro_offset = 0.0
+z_gyro_offset_for_caculate = 0.0
+
+def imu_get_yaw_by_integral(data):
+    global z_gyro
+    global z_gyro_offset
+    angular_velocity = data.angular_velocity
+    z_gyro = z_gyro - angular_velocity.z / 2 + z_gyro_offset_for_caculate
+    z_gyro_offset = angular_velocity.z / 2
+
+rospy.Subscriber("/robotis/open_cr/imu", Imu, imu_get_yaw_by_integral, queue_size=1)
+
+def empty(v):
+    pass
+
+def init():
+    robot.setGeneralControlModule("action_module")
+    robot.playMotion(1, wait_for_end=True)
+    robot.setGeneralControlModule("walking_module")
+    robot.setJointsControlModule(["head_pan", "head_tilt"], ["none", "none"])
+    # robot.setJointPos(["head_pan", "head_tilt"], [0, -1.6])
+    robot.setJointPos(["head_pan", "head_tilt"], [0,np.radians(-85)])
+    rospy.sleep(4.0)
+    z_gyro = 0.0
+    z_gyro_offset_for_caculate = z_gyro_offset
+
+rospy.init_node("fira_Archery")
+
+robot = Robot()
+
+class States:
+    INIT = -1
+    READY = 0
+    WALK_TO_THE_LINE = 1
+    CORRECT_ANGLE = 2
+    GO_UP_STAIRS = 3
+    GO_DOWN_STAIRS = 4
+    END = 99
+
+cap = cv2.VideoCapture(0)
+
+start_time = time.time()
+current_time = start_time
+
+position_correct = False
+detect_line = False
+
+currState = States.INIT
+
+rospy.sleep(1)
+
+z_gyro_offset_for_caculate = z_gyro_offset
+z_gyro = 0.0
+count = 0
+pass_time = time.time()
+
+tagret_degree = 0
+
+hiest_stair = 1
+current_stair = 0
+
+while not rospy.is_shutdown():
+    ret, frame = cap.read()
+
+    if not ret:
+        break
+    
+    height = frame.shape[0]
+    crop_height = int(height * 0.6)
+    crop = 100
+    frame = frame[:crop_height, crop:-crop]
+
+    img_blur = cv2.GaussianBlur(frame, (3,3) , 5)
+    hsv_img = cv2.cvtColor(img_blur, cv2.COLOR_BGR2HSV)
+    # h_min = cv2.getTrackbarPos("hue min", "track_bar")
+    # h_max = cv2.getTrackbarPos("hue max", "track_bar")
+    # s_min = cv2.getTrackbarPos("sat min", "track_bar")
+    # s_max = cv2.getTrackbarPos("sat max", "track_bar")
+    # v_min = cv2.getTrackbarPos("val min", "track_bar")
+    # v_max = cv2.getTrackbarPos("val max", "track_bar")
+    h_min, h_max, s_min, s_max, v_min, v_max = 90, 120, 100, 255, 50, 255
+    # print(h_min, h_max, s_min, s_max, v_min, v_max )
+    lower = np.array([h_min,s_min,v_min])
+    upper = np.array([h_max,s_max,v_max])
+
+    mask_img = cv2.inRange(hsv_img, lower, upper)
+    
+    # gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # img_blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+   
+    img_blurred = cv2.GaussianBlur(mask_img, (7, 7), 0)
+    img_blurred = cv2.medianBlur(img_blurred, 5)
+    img_blurred = cv2.medianBlur(img_blurred, 5)
+   
+    edges = cv2.Canny(img_blurred, 50, 150)
+   
+    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=50, 
+                            minLineLength=30, maxLineGap=20)
+    
+    smallest_y_line = None
+    smallest_y_value = float('inf')
+    
+    detect_line = False
+    slope = 100000
+    dis = 1000000
+    maxlen = 0
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            len = np.sqrt((y2-y1)**2 + (x2-x1)**2)
+            if len >= maxlen:
+                maxlen = len
+                slope = float(y2 - y1) / float(x2 - x1 + 1e-6) 
+                dis = (y2 + y1)/2
+                # print("dis:",dis)
+                if  len > 150: #abs(slope) < 0.5 and
+                    detect_line = True
+                    cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 5)
+        # print("Smallest y line parameters: ({}, {}, {}, {})".format(smallest_y_line[0], smallest_y_line[1], smallest_y_line[2], smallest_y_line[3]))
+
+    cv2.imshow('Video', frame)
+    cv2.imshow("mask_img",mask_img)
+    cv2.imshow("edges",edges)
+    cv2.waitKey(1)
+
+    if currState == States.INIT:
+        print("[INIT]")
+        init()
+        # rospy.sleep(1)
+
+        z_gyro_offset_for_caculate = z_gyro_offset
+        z_gyro = 0.0
+        currState = States.READY
+
+    elif currState == States.READY:
+        print("[READY]")
+        if robot.buttonCheck("start"):
+            detect_line = []
+            currState = States.WALK_TO_THE_LINE
+            start_time = current_time
+
+    elif currState == States.WALK_TO_THE_LINE:
+        print("[WALK_TO_THE_LINE]")
+        robot.walkStart()
+        robot.walkVelocities(x=3, y=0, th=np.clip(z_gyro, -15, 15), z_move_amplitude=0.045, balance=True, z_offset=0)
+        # robot.walkStop()
+
+        if detect_line is True:
+            print("STOP!!!")
+            rospy.sleep(0.5)
+            robot.walkStop()
+            rospy.sleep(1)
+            pass_time = time.time()
+            currState = States.CORRECT_ANGLE
+
+            # rospy.sleep(1)
+            # pass_time = time.time()
+            # while(time.time() - pass_time) < 5:
+            #     continue
+
+            # # while not robot.buttonCheck("start"):
+            # #     robot.walkStop()
+
+            # robot.setGeneralControlModule("walking_module")
+            # robot.setJointsControlModule(["head_pan", "head_tilt"], ["none", "none"])
+            # robot.setJointPos(["head_pan", "head_tilt"], [0,np.radians(-90)])
+            # rospy.sleep(1.0)
+
+    elif currState == States.CORRECT_ANGLE:
+        print("[CORRECT_ANGLE]")
+        if(time.time() - pass_time) < 5:
+            # slope = -math.degrees(math.atan(slope))
+            tagret_degree = -math.degrees(math.atan(slope))
+            print("tagret_degree:",tagret_degree)
+            continue
+        robot.walkStart()
+
+        robot.walkVelocities(x=-0.5, th=np.clip(z_gyro+tagret_degree,-5,5), balance=True, hip_pitch=7)
+
+        if abs(z_gyro + tagret_degree) < 3 and dis > 220:
+            # while not robot.buttonCheck("start"):
+            #     robot.walkStop()
+            robot.walkStop()
+            if current_stair < hiest_stair:
+                currState = States.GO_UP_STAIRS
+            else:
+                currState = States.GO_DOWN_STAIRS
+            rospy.sleep(2)
+
+        
+        # if tagret_degree < -0.05:
+        #     print("turn left")
+        #     robot.walkStart()
+        #     robot.walkVelocities(x=-5, th=5, balance=True, hip_pitch=7)
+        #     robot.walkStop()
+        #     rospy.sleep(0.1)
+        # elif tagret_degree > 0.05:
+        #     print("turn right")
+        #     robot.walkStart()
+        #     robot.walkVelocities(x=-5, th=-5, balance=True, hip_pitch=7)
+        #     robot.walkStop()
+        #     rospy.sleep(0.1)
+        # else:
+        #     print("position correct")
+        #     position_correct = True
+        #     rospy.sleep(1)
+
+        # if position_correct == True:
+        #     robot.walkStop()
+        #     currState = States.GO_UP_STAIRS
+        #     rospy.sleep(2)
+
+        # z_gyro = 0
+
+    elif currState == States.GO_UP_STAIRS:
+        current_stair += 1
+        print("[GO_UP_STAIRS]")
+        robot.setGeneralControlModule("action_module")
+        robot.playMotion(2, wait_for_end=True)
+        robot.playMotion(100, wait_for_end=True)
+        # robot.playMotion(101, wait_for_end=True)
+        robot.playMotion(2, wait_for_end=True)
+        rospy.sleep(1.0)
+        init()
+        currState = States.WALK_TO_THE_LINE
+
+    elif currState == States.GO_DOWN_STAIRS:
+        current_stair -= 1
+        print("[GO_DOWN_STAIRS]")
+        robot.setGeneralControlModule("action_module")
+        robot.playMotion(2, wait_for_end=True)
+        robot.playMotion(102, wait_for_end=True)
+        # robot.playMotion(101, wait_for_end=True)
+        robot.playMotion(2, wait_for_end=True)
+        rospy.sleep(1.0)
+        init()
+        currState = States.WALK_TO_THE_LINE
+
+    elif currState == States.END:
+        print("[END]")
+        break
+
+    cv2.waitKey(1)

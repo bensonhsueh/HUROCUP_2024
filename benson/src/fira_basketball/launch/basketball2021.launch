@@ -1,0 +1,4 @@
+<launch>
+    <node name="cv_camera" pkg="cv_camera" type="cv_camera_node" />
+    <node name="gripper" pkg="op3_gripper" type="op3_gripper_node.py" />
+</launch>

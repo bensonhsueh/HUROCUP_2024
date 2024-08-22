@@ -1,0 +1,4 @@
+<launch>
+    <node name="cv_camera" pkg="cv_camera" type="cv_camera_node" />
+    <node name="sprint_player" pkg="fira_basketball" type="fira_sprint_final.py" />
+</launch>

@@ -1,0 +1,16 @@
+<launch>
+    <!-- robotis op3 manager -->
+    <include file="$(find op3_manager)/launch/op3_manager.launch"/>
+
+    <!--<include file="$(find usb_cam)/launch/webcam.launch"/>-->
+    <!-- <include file="$(find robot_camera)/launch/uvc_webcam.launch"/> -->
+    <node pkg="cv_camera" type="cv_camera_node" name="cv_camera" output="screen">
+		<param name="image_width" value="640" />
+		<param name="image_height" value="480" />
+	</node>
+    
+    <node name="sprint_aruco"  pkg="sprint_aruco_detector" type="sprint_aruco_detector.py"  output="screen"/>
+    <node name="sprint_demo" pkg="sprint_player"         type="sprint_demo.py"  output="screen" />
+    <node name="sprint_walk" pkg="sprint_walk"         type="walking.py"  output="screen" />
+    
+</launch>

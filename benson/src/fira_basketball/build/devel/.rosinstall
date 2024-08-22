@@ -1,0 +1,2 @@
+- setup-file:
+    local-name: /home/robotis/benson_ws/src/fira_basketball/build/devel/setup.sh

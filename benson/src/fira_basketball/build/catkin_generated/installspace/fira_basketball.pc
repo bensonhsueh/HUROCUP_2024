@@ -1,0 +1,8 @@
+prefix=/usr/local
+
+Name: fira_basketball
+Description: Description of fira_basketball
+Version: 0.0.0
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib 
+Requires: geometry_msgs op3_gripper rospy std_msgs message_runtime
